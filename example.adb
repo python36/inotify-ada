@@ -15,7 +15,6 @@ procedure example is
   m : inotify.mask_t;
   us : ada.strings.unbounded.unbounded_string;
 
-  fd1 : inotify.file_descriptor;
 begin
   e := inotify.init(fd);
 
@@ -81,10 +80,6 @@ begin
   if e /= inotify.NO_ERROR then
     ada.text_io.put_line("CLOSE Error");
     gnat.os_lib.os_exit(integer(e));
-  end if;
-
-  if fd1 = fd then
-    null;
   end if;
 
 end example;
