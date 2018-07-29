@@ -51,6 +51,9 @@ package inotify is
     fd : file_descriptor; wd : watch_descriptor) return error_t;
   -- errors: EBADF, EINVAL
 
+  -----------
+  -- close --
+  -----------
   function close (fd : file_descriptor) return error_t;
   -- When all file descriptors referring to an inotify instance have been closed,
   -- the underlying object and its resources are freed for reuse by the kernel;
@@ -68,7 +71,7 @@ package inotify is
   function mask_in_mask (a, b : mask_t) return boolean; -- a in b?
   function "*" (a, b : mask_t) return boolean; -- mask_in_mask
 
-  function mask_to_mask (a, b : mask_t) return mask_t; -- a = a | b;
+  function mask_to_mask (a, b : mask_t) return mask_t; -- a | b;
   function "+" (a, b : mask_t) return mask_t; -- mask_to_mask
 
   NO_ERROR : constant error_t := 0;
