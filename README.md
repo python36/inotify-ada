@@ -1,5 +1,5 @@
 # inotify-ada
-Bind inotify to Ada
+Ada bind inotify
 ## Build
 ```
 gcc -c inotifyconstants.c
