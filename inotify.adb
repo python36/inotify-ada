@@ -30,6 +30,8 @@ package body inotify is
 
   function get_event (handle : descriptor_t) return event_t is
     use type ada.strings.unbounded.unbounded_string;
+    use type system.crtl.size_t;
+
     size : system.crtl.size_t;
     e : event;
     name : interfaces.c.char_array(0..MAXFILENAME);
@@ -38,16 +40,31 @@ package body inotify is
     size := interfaces.c_streams.fread(
       header_buf'address, system.crtl.size_t(event_io.buffer_size), 1, interfaces.c_streams.files(handle));
 
+    if size /= 1 then
+      if interfaces.c_streams.ferror(interfaces.c_streams.files(handle)) /= 0 then
+        ada.exceptions.raise_exception(error_badf'identity, "[Read]");
+      end if;
+      return event_null;
+    end if;
+
     event_io.read(header_buf, e);
 
     size := interfaces.c_streams.fread(
       name'address, 1, system.crtl.size_t(e.length), interfaces.c_streams.files(handle));
+
+    if size /= system.crtl.size_t(e.length) then
+      if interfaces.c_streams.ferror(interfaces.c_streams.files(handle)) /= 0 then
+        ada.exceptions.raise_exception(error_badf'identity, "[Read]");
+      end if;
+      return event_null;
+    end if;
 
     result.wd := watch_descriptor_t(e.watch_descriptor);
     result.mask := mask_t(e.mask);
     result.cookie := cookie_t(e.cookie);
     result.name := ada.strings.unbounded.to_unbounded_string(
       interfaces.c.strings.value(interfaces.c.strings.new_char_array(name), interfaces.c.size_t(e.length)));
+
     return result;
   end get_event;
 

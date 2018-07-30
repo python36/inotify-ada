@@ -21,6 +21,9 @@ package inotify is
     name : ada.strings.unbounded.unbounded_string;
   end record;
 
+  watch_descriptor_null : constant watch_descriptor_t;
+  event_null : constant event_t;
+
   error_inval : exception;
   error_mfile : exception;
   error_nfile : exception;
@@ -139,6 +142,9 @@ private
   type descriptor_t is new interfaces.c_streams.files;
   type watch_descriptor_t is new interfaces.c.int;
   MAXFILENAME : constant interfaces.c.size_t := 256;
+
+  watch_descriptor_null : constant watch_descriptor_t := watch_descriptor_t(0);
+  event_null : constant event_t := (watch_descriptor_null, 0, 0, ada.strings.unbounded.null_unbounded_string);
 
   type event is record
     watch_descriptor  : interfaces.c.int;
