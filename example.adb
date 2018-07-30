@@ -21,6 +21,10 @@ begin
     ada.text_io.put(ada.strings.unbounded.to_string(event.name));
 
     if event /= inotify.event_null then
+      if inotify.IN_ISDIR * event.mask then
+        ada.text_io.put(" directory ");
+      end if;
+
       if inotify.IN_CREATE * event.mask then
         ada.text_io.put_line(" create");
       elsif inotify.IN_DELETE * event.mask then
@@ -29,8 +33,6 @@ begin
         ada.text_io.put_line(" delete self");
         exit;
       end if;
-    else
-      ada.text_io.put("hhh");
     end if;
 
   end loop;
