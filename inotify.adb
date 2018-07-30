@@ -22,95 +22,134 @@ package body inotify is
     return mask_to_mask(a, b);
   end "+";
 
-  function "=" (a, b : file_descriptor) return boolean is
-    use type gnat.os_lib.file_descriptor;
+  function "=" (a, b : descriptor_t) return boolean is
+    use type interfaces.c_streams.files;
   begin
-    return gnat.os_lib.file_descriptor(a) = gnat.os_lib.file_descriptor(b);
+    return interfaces.c_streams.files(a) = interfaces.c_streams.files(b);
   end "=";
 
-  function get (
-      buf : buf_t; start : natural := 0;
-      num : positive := int_size) return interfaces.unsigned_32 is
-    use type interfaces.unsigned_32;
-    result : interfaces.unsigned_32 := 0;
-    ti : natural := start + buf'first;
-  begin
-    for i in reverse ti..ti + num loop
-      result := interfaces.shift_left(result, 8);
-      result := result + interfaces.unsigned_32(buf(i));
-    end loop;
-    return result;
-  end get;
-
-  function get_event (
-      fd : file_descriptor; wd : out watch_descriptor;
-      mask : out mask_t; cookie : out cookie_t;
-      name : in out ada.strings.unbounded.unbounded_string) return error_t is
+  function get_event (handle : descriptor_t) return event_t is
     use type ada.strings.unbounded.unbounded_string;
-    buf : buf_t;
-    ti : integer;
-    len : natural;
+    size : system.crtl.size_t;
+    e : event;
+    name : interfaces.c.char_array(0..MAXFILENAME);
+    result : event_t;
   begin
-    ti := gnat.os_lib.read(gnat.os_lib.file_descriptor(fd), buf'address, buf_size);
-    if ti = -1 then
-      return error_t(gnat.os_lib.errno);
-    elsif ti < sizeof_struct_event then
-      return ENODATA;
-    end if;
+    size := interfaces.c_streams.fread(
+      header_buf'address, system.crtl.size_t(event_io.buffer_size), 1, interfaces.c_streams.files(handle));
 
-    wd := watch_descriptor(get(buf));
-    mask := mask_t(get(buf, int_size, uint32_size));
-    cookie := cookie_t(get(buf, int_size + uint32_size, uint32_size));
-    len := natural(get(buf, int_size + uint32_size * 2, uint32_size));
+    event_io.read(header_buf, e);
 
-    for i in sizeof_struct_event..sizeof_struct_event + len loop 
-      name := name & character'val(buf(i));
-    end loop;
+    size := interfaces.c_streams.fread(
+      name'address, 1, system.crtl.size_t(e.length), interfaces.c_streams.files(handle));
 
-    return NO_ERROR;
+    result.wd := watch_descriptor_t(e.watch_descriptor);
+    result.mask := mask_t(e.mask);
+    result.cookie := cookie_t(e.cookie);
+    result.name := ada.strings.unbounded.to_unbounded_string(
+      interfaces.c.strings.value(interfaces.c.strings.new_char_array(name), interfaces.c.size_t(e.length)));
+    return result;
   end get_event;
 
-  function add_watch (
-      fd : file_descriptor; path : string; mask : mask_t;
-      wd : out watch_descriptor) return error_t is
+  function add_watch (handle : descriptor_t; path : string; mask : mask_t) return watch_descriptor_t is
+    wd : watch_descriptor_t;
+    error : error_t;
   begin
-    if path'length > MAXFILENAME then
-      return ENAMETOOLONG;
+    if path'length > natural(MAXFILENAME) then
+      ada.exceptions.raise_exception(error_nametoolong'identity, "[Rm] name too long. code: " & ENAMETOOLONG'img);
     end if;
-    wd := inotify_add_watch(fd, interfaces.c.strings.new_string(path), mask);
+    wd := inotify_add_watch(
+      interfaces.c_streams.fileno(interfaces.c_streams.files(handle)),
+      interfaces.c.strings.new_string(path), mask);
     if wd = -1 then
-      return error_t(gnat.os_lib.errno);
+      error := error_t(gnat.os_lib.errno);
+      if error = EACCES then
+        ada.exceptions.raise_exception(error_acces'identity, "[Add] not permitted. code: " & error'img);
+      elsif error = EBADF then
+        ada.exceptions.raise_exception(error_badf'identity, "[Add] bad fd. code: " & error'img);
+      elsif error = EFAULT then
+        ada.exceptions.raise_exception(error_fault'identity, "[Add] pathname outside. code: " & error'img);
+      elsif error = EINVAL then
+        ada.exceptions.raise_exception(error_inval'identity, "[Add] no valid mask. code: " & error'img);
+      elsif error = ENAMETOOLONG then
+        ada.exceptions.raise_exception(error_nametoolong'identity, "[Add] name too long. code: " & error'img);
+      elsif error = ENOENT then
+        ada.exceptions.raise_exception(error_noent'identity, "[Add] does not exist or is a symlink. code: " & error'img);
+      elsif error = ENOMEM then
+        ada.exceptions.raise_exception(error_nomem'identity, "[Add] memory. code: " & error'img);
+      elsif error = ENOSPC then
+        ada.exceptions.raise_exception(error_nospc'identity, "[Add] limit. code: " & error'img);
+      else
+        ada.exceptions.raise_exception(error_unknown'identity, "[Add] unknown. code: " & error'img);
+      end if;
     end if;
-    return NO_ERROR;
+    return wd;
   end add_watch;
 
-  function rm_watch (
-      fd : file_descriptor; wd : watch_descriptor) return error_t is
+  procedure rm_watch (handle : descriptor_t; wd : watch_descriptor_t) is
+    error : error_t;
   begin
-    if inotify_rm_watch(fd, wd) = -1 then
-      return error_t(gnat.os_lib.errno);
+    if inotify_rm_watch(interfaces.c_streams.fileno(interfaces.c_streams.files(handle)), wd) = -1 then
+      error := error_t(gnat.os_lib.errno);
+      if error = EINVAL then
+        ada.exceptions.raise_exception(error_inval'identity, "[Rm] bad wd. code: " & error'img);
+      elsif error = EBADF then
+        ada.exceptions.raise_exception(error_badf'identity, "[Rm] bad fd. code: " & error'img);
+      else
+        ada.exceptions.raise_exception(error_unknown'identity, "[Init] unknown. code: " & error'img);
+      end if;
     end if;
-    return NO_ERROR;
   end rm_watch;
 
-  function init (fd : out file_descriptor; flags : mask_t := 0) return error_t is
-    use type file_descriptor;
+  function init (nonblock : boolean := false; cloexec : boolean := false) return descriptor_t is
+    use type interfaces.c_streams.files;
+    fd : integer;
+    mode : string := "r";
+    handle : descriptor_t;
+    flags : mask_t := 0;
+    error : error_t;
   begin
-    if flags = 0 then
-      fd := inotify_init;
-    else
-      fd := inotify_init1(flags);
+    if nonblock then
+      flags := flags + IN_NONBLOCK;
     end if;
+    if cloexec then
+      flags := flags + IN_CLOEXEC;
+    end if;
+    fd := inotify_init1(mask_t(flags));
+
     if fd = -1 then
-      return error_t(gnat.os_lib.errno);
+      error := error_t(gnat.os_lib.errno);
+      if error = EINVAL then
+        ada.exceptions.raise_exception(error_inval'identity, "[Init] bad flags. code: " & error'img);
+      elsif error = EMFILE then
+        ada.exceptions.raise_exception(error_mfile'identity, "[Init] user limit. code: " & error'img);
+      elsif error = ENFILE then
+        ada.exceptions.raise_exception(error_nfile'identity, "[Init] system limit. code: " & error'img);
+      elsif error = ENOMEM then
+        ada.exceptions.raise_exception(error_nomem'identity, "[Init] memory. code: " & error'img);
+      else
+        ada.exceptions.raise_exception(error_unknown'identity, "[Init] unknown. code: " & error'img);
+      end if;
     end if;
-    return NO_ERROR;
+    handle := descriptor_t(interfaces.c_streams.fdopen(fd, mode'address));
+    if interfaces.c_streams.files(handle) = interfaces.c_streams.NULL_stream then
+      error := error_t(gnat.os_lib.errno);
+      if error = EINVAL then
+        ada.exceptions.raise_exception(error_inval'identity, "[Init] bad flags. code: " & error'img);
+      else
+        ada.exceptions.raise_exception(error_unknown'identity, "[Init] unknown. code: " & error'img);
+      end if;
+    end if;
+
+    return handle;
   end init;
 
-  function close (fd : file_descriptor) return error_t is
+  procedure close (handle : descriptor_t) is
   begin
-    gnat.os_lib.close(gnat.os_lib.file_descriptor(fd));
-    return error_t(gnat.os_lib.errno);
+    if interfaces.c_streams.fclose(interfaces.c_streams.files(handle)) /= 0 then
+      ada.exceptions.raise_exception(error_close'identity, "[Close] stream. code: " & error_t(gnat.os_lib.errno)'img);
+    end if;
+    gnat.os_lib.close(gnat.os_lib.file_descriptor(interfaces.c_streams.fileno(interfaces.c_streams.files(handle))));
   end close;
 
 end inotify;

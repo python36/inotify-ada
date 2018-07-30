@@ -2,79 +2,52 @@ with gnat.os_lib;
 with interfaces;
 with interfaces.c;
 with interfaces.c.strings;
+with interfaces.c_streams;
 with ada.strings.unbounded;
+with ada.storage_io;
+with system.crtl;
+with ada.exceptions;
 
 package inotify is
-  type file_descriptor is limited private;
-  type watch_descriptor is new interfaces.c.int;
+  type descriptor_t is private;
+  type watch_descriptor_t is private;
   type mask_t is new interfaces.unsigned_32;
   type cookie_t is new interfaces.unsigned_32;
-  type error_t is new integer;
 
-  ----------
-  -- init --
-  ----------
-  function init (fd : out file_descriptor; flags : mask_t := 0) return error_t;
-  -- flags: IN_NONBLOCK, IN_CLOEXEC
-  -- errors: EINVAL, EMFILE, EMFILE, ENFILE, ENOMEM
+  type event_t is record
+    wd : watch_descriptor_t;
+    mask : mask_t;
+    cookie : cookie_t;
+    name : ada.strings.unbounded.unbounded_string;
+  end record;
 
-  ---------------
-  -- add_watch --
-  ---------------
-  function add_watch (
-    fd : file_descriptor; path : string; mask : mask_t;
-    wd : out watch_descriptor ) return error_t;
-  -- masks: IN_ACCESS, IN_ATTRIB, IN_CLOSE_WRITE, IN_CLOSE_NOWRITE, IN_CREATE,
-  --        IN_DELETE, IN_DELETE_SELF, IN_MODIFY, IN_MOVE_SELF, IN_MOVED_FROM,
-  --        IN_MOVED_TO, IN_OPEN,
-  --        IN_ALL_EVENTS, IN_MOVE, IN_CLOSE,
-  --        IN_DONT_FOLLOW, IN_EXCL_UNLINK, IN_MASK_ADD, IN_ONESHOT, IN_ONLYDIR
-  -- errors: EACCES, EBADF, EFAULT, EINVAL, ENAMETOOLONG, ENOENT, ENOMEM, ENOSPC
+  error_inval : exception;
+  error_mfile : exception;
+  error_nfile : exception;
+  error_nomem : exception;
+  error_unknown : exception;
+  error_close : exception;
+  error_badf : exception;
+  error_nametoolong : exception;
+  error_acces : exception;
+  error_fault : exception;
+  error_noent : exception;
+  error_nospc : exception;
 
-  ----------
-  -- read --
-  ----------
-  function get_event (
-      fd : file_descriptor; wd : out watch_descriptor;
-      mask : out mask_t; cookie : out cookie_t;
-      name : in out ada.strings.unbounded.unbounded_string) return error_t;
-  -- masks: IN_ACCESS, IN_ATTRIB, IN_CLOSE_WRITE, IN_CLOSE_NOWRITE, IN_CREATE,
-  --        IN_DELETE, IN_DELETE_SELF, IN_MODIFY, IN_MOVE_SELF, IN_MOVED_FROM,
-  --        IN_MOVED_TO, IN_OPEN,
-  --        IN_IGNORED, IN_ISDIR, IN_Q_OVERFLOW, IN_UNMOUNT
-  -- errors: EBADF, EFAULT, EINVAL, EINVAL
+  function init (nonblock : boolean := false; cloexec : boolean := false) return descriptor_t;
+  function add_watch (handle : descriptor_t; path : string; mask : mask_t) return watch_descriptor_t;
+  function get_event (handle : descriptor_t) return event_t;
+  procedure rm_watch (handle : descriptor_t; wd : watch_descriptor_t);
+  procedure close (handle : descriptor_t);
 
-  --------------
-  -- rm_watch --
-  --------------
-  function rm_watch (
-    fd : file_descriptor; wd : watch_descriptor) return error_t;
-  -- errors: EBADF, EINVAL
+  function "=" (a, b : descriptor_t) return boolean;
 
-  -----------
-  -- close --
-  -----------
-  function close (fd : file_descriptor) return error_t;
-  -- When all file descriptors referring to an inotify instance have been closed,
-  -- the underlying object and its resources are freed for reuse by the kernel;
-  -- all associated watches are automatically freed
-  -- errors: EBADF, ENOSPC
-
-  ---------------------
-  -- file_descriptor --
-  ---------------------
-  function "=" (a, b : file_descriptor) return boolean;
-
-  -----------
-  -- masks --
-  -----------
   function mask_in_mask (a, b : mask_t) return boolean; -- a in b?
   function "*" (a, b : mask_t) return boolean; -- mask_in_mask
 
   function mask_to_mask (a, b : mask_t) return mask_t; -- a | b;
   function "+" (a, b : mask_t) return mask_t; -- mask_to_mask
 
-  NO_ERROR : constant error_t := 0;
   ------------
   -- Events --
   ------------                                  
@@ -160,6 +133,40 @@ package inotify is
     -- descriptor.  See the description of the O_CLOEXEC flag in open(2) for reasons why
     -- this may be useful.
 
+private
+
+  type error_t is new interfaces.c.int;
+  type descriptor_t is new interfaces.c_streams.files;
+  type watch_descriptor_t is new interfaces.c.int;
+  MAXFILENAME : constant interfaces.c.size_t := 256;
+
+  type event is record
+    watch_descriptor  : interfaces.c.int;
+    mask   : interfaces.unsigned_32;
+    cookie : interfaces.unsigned_32;
+    length : interfaces.unsigned_32;
+  end record;
+  pragma convention (c, event);
+
+  package event_io is new ada.storage_io(event);
+  header_buf : event_io.buffer_type;
+
+  -- function inotify_init return integer;
+  -- pragma import (c, inotify_init, "inotify_init");
+
+  function inotify_init1 (flags : mask_t) return integer;
+  pragma import (c, inotify_init1, "inotify_init1");
+
+  function inotify_add_watch (
+    fd : integer; pathname : interfaces.c.strings.chars_ptr;
+    mask : mask_t) return watch_descriptor_t;
+  pragma import (c, inotify_add_watch, "inotify_add_watch");
+
+  function inotify_rm_watch (
+    fd : integer;
+    wd : watch_descriptor_t) return error_t;
+  pragma import (c, inotify_rm_watch, "inotify_rm_watch");
+
   ------------
   -- Errors --
   ------------
@@ -191,34 +198,6 @@ package inotify is
 
   ENOSPC : constant error_t; -- The user limit on the total number of inotify watches was
     -- reached or the kernel failed to allocate a needed resource.
-
-private
-
-  type file_descriptor is new gnat.os_lib.file_descriptor;
-  MAXFILENAME : constant natural := 256;
-  int_size : constant positive := interfaces.c.int'size / 8;
-  uint32_size : constant positive := interfaces.unsigned_32'size / 8;
-  sizeof_struct_event : constant positive := int_size + uint32_size * 3;
-  buf_size : constant positive := sizeof_struct_event + MAXFILENAME * 2 + 1;
-  type buf_t is array (0..buf_size - 1) of interfaces.unsigned_8;
-  pragma convention (c, buf_t);
-  for buf_t'component_size use interfaces.unsigned_8'size;
-
-  function inotify_init return file_descriptor;
-  pragma import (c, inotify_init, "inotify_init");
-
-  function inotify_init1 (flags : mask_t) return file_descriptor;
-  pragma import (c, inotify_init1, "inotify_init1");
-
-  function inotify_add_watch (
-    fd : file_descriptor; pathname : interfaces.c.strings.chars_ptr;
-    mask : mask_t) return watch_descriptor;
-  pragma import (c, inotify_add_watch, "inotify_add_watch");
-
-  function inotify_rm_watch (
-    fd : file_descriptor;
-    wd : watch_descriptor) return error_t;
-  pragma import (c, inotify_rm_watch, "inotify_rm_watch");
 
   pragma import (C, IN_ACCESS, "_IN_ACCESS");
   pragma import (C, IN_CREATE, "_IN_CREATE");
