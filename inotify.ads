@@ -9,7 +9,7 @@ with system.crtl;
 with ada.exceptions;
 
 package inotify is
-  type descriptor_t is private;
+  type descriptor_t is tagged private;
   type watch_descriptor_t is private;
   type mask_t is new interfaces.unsigned_32;
   type cookie_t is new interfaces.unsigned_32;
@@ -36,6 +36,7 @@ package inotify is
   error_fault : exception;
   error_noent : exception;
   error_nospc : exception;
+  error_read : exception;
 
   function init (nonblock : boolean := false; cloexec : boolean := false) return descriptor_t;
   function add_watch (handle : descriptor_t; path : string; mask : mask_t) return watch_descriptor_t;
@@ -44,6 +45,7 @@ package inotify is
   procedure close (handle : descriptor_t);
 
   function "=" (a, b : descriptor_t) return boolean;
+  -- function "=" (a, b : watch_descriptor_t) return
 
   function mask_in_mask (a, b : mask_t) return boolean; -- a in b?
   function "*" (a, b : mask_t) return boolean; -- mask_in_mask
@@ -133,13 +135,16 @@ package inotify is
     -- description.  Using this flag saves extra calls to fcntl(2) to achieve the same result.
 
   IN_CLOEXEC : constant mask_t; -- Set the close-on-exec (FD_CLOEXEC) flag on the new file
-    -- descriptor.  See the description of the O_CLOEXEC flag in open(2) for reasons why
+    -- descriptor. See the description of the O_CLOEXEC flag in open(2) for reasons why
     -- this may be useful.
 
 private
 
   type error_t is new interfaces.c.int;
-  type descriptor_t is new interfaces.c_streams.files;
+  type descriptor_t is tagged
+    record
+      file : interfaces.c_streams.files;
+    end record;
   type watch_descriptor_t is new interfaces.c.int;
   MAXFILENAME : constant interfaces.c.size_t := 256;
 

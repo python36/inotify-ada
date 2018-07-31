@@ -6,6 +6,7 @@ with ada.strings.unbounded;
 procedure example is
   use type inotify.mask_t;
   use type inotify.event_t;
+  use type inotify.watch_descriptor_t;
 
   handle : inotify.descriptor_t;
   wd : inotify.watch_descriptor_t;
@@ -13,11 +14,10 @@ procedure example is
 
 begin
   handle := inotify.init;
-  wd := inotify.add_watch(handle, "/home/gs/t2",
-    inotify.IN_CREATE + inotify.IN_DELETE + inotify.IN_DELETE_SELF);
+  wd := handle.add_watch("/media/gs/DA84-0C6A/preseed", inotify.IN_ALL_EVENTS);
 
   loop
-    event := inotify.get_event(handle);
+    event := handle.get_event;
     ada.text_io.put(ada.strings.unbounded.to_string(event.name));
 
     if event /= inotify.event_null then
@@ -34,8 +34,7 @@ begin
         exit;
       end if;
     end if;
-
   end loop;
 
-  inotify.close(handle);
+  handle.close;
 end example;

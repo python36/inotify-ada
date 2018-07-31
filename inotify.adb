@@ -25,7 +25,7 @@ package body inotify is
   function "=" (a, b : descriptor_t) return boolean is
     use type interfaces.c_streams.files;
   begin
-    return interfaces.c_streams.files(a) = interfaces.c_streams.files(b);
+    return a.file = b.file;
   end "=";
 
   function get_event (handle : descriptor_t) return event_t is
@@ -38,10 +38,10 @@ package body inotify is
     result : event_t;
   begin
     size := interfaces.c_streams.fread(
-      header_buf'address, system.crtl.size_t(event_io.buffer_size), 1, interfaces.c_streams.files(handle));
+      header_buf'address, system.crtl.size_t(event_io.buffer_size), 1, handle.file);
 
     if size /= 1 then
-      if interfaces.c_streams.ferror(interfaces.c_streams.files(handle)) /= 0 then
+      if interfaces.c_streams.ferror(handle.file) /= 0 then
         ada.exceptions.raise_exception(error_badf'identity, "[Read]");
       end if;
       return event_null;
@@ -50,10 +50,10 @@ package body inotify is
     event_io.read(header_buf, e);
 
     size := interfaces.c_streams.fread(
-      name'address, 1, system.crtl.size_t(e.length), interfaces.c_streams.files(handle));
+      name'address, 1, system.crtl.size_t(e.length), handle.file);
 
     if size /= system.crtl.size_t(e.length) then
-      if interfaces.c_streams.ferror(interfaces.c_streams.files(handle)) /= 0 then
+      if interfaces.c_streams.ferror(handle.file) /= 0 then
         ada.exceptions.raise_exception(error_badf'identity, "[Read]");
       end if;
       return event_null;
@@ -76,7 +76,7 @@ package body inotify is
       ada.exceptions.raise_exception(error_nametoolong'identity, "[Rm] name too long. code: " & ENAMETOOLONG'img);
     end if;
     wd := inotify_add_watch(
-      interfaces.c_streams.fileno(interfaces.c_streams.files(handle)),
+      interfaces.c_streams.fileno(handle.file),
       interfaces.c.strings.new_string(path), mask);
     if wd = -1 then
       error := error_t(gnat.os_lib.errno);
@@ -106,7 +106,7 @@ package body inotify is
   procedure rm_watch (handle : descriptor_t; wd : watch_descriptor_t) is
     error : error_t;
   begin
-    if inotify_rm_watch(interfaces.c_streams.fileno(interfaces.c_streams.files(handle)), wd) = -1 then
+    if inotify_rm_watch(interfaces.c_streams.fileno(handle.file), wd) = -1 then
       error := error_t(gnat.os_lib.errno);
       if error = EINVAL then
         ada.exceptions.raise_exception(error_inval'identity, "[Rm] bad wd. code: " & error'img);
@@ -148,8 +148,8 @@ package body inotify is
         ada.exceptions.raise_exception(error_unknown'identity, "[Init] unknown. code: " & error'img);
       end if;
     end if;
-    handle := descriptor_t(interfaces.c_streams.fdopen(fd, mode'address));
-    if interfaces.c_streams.files(handle) = interfaces.c_streams.NULL_stream then
+    handle.file := interfaces.c_streams.fdopen(fd, mode'address);
+    if handle.file = interfaces.c_streams.NULL_stream then
       error := error_t(gnat.os_lib.errno);
       if error = EINVAL then
         ada.exceptions.raise_exception(error_inval'identity, "[Init] bad flags. code: " & error'img);
@@ -163,10 +163,10 @@ package body inotify is
 
   procedure close (handle : descriptor_t) is
   begin
-    if interfaces.c_streams.fclose(interfaces.c_streams.files(handle)) /= 0 then
+    if interfaces.c_streams.fclose(handle.file) /= 0 then
       ada.exceptions.raise_exception(error_close'identity, "[Close] stream. code: " & error_t(gnat.os_lib.errno)'img);
     end if;
-    gnat.os_lib.close(gnat.os_lib.file_descriptor(interfaces.c_streams.fileno(interfaces.c_streams.files(handle))));
+    gnat.os_lib.close(gnat.os_lib.file_descriptor(interfaces.c_streams.fileno(handle.file)));
   end close;
 
 end inotify;
